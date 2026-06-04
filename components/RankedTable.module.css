@@ -1,0 +1,56 @@
+.table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.table th {
+  text-align: left;
+  padding: var(--spacing-2) var(--spacing-3);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-semibold);
+  text-transform: uppercase;
+  letter-spacing: var(--font-letterSpacing-wide);
+  color: var(--color-semantic-surface-fg-muted);
+  border-bottom: var(--border-width-default) solid var(--color-semantic-surface-border);
+}
+
+.table td {
+  padding: var(--spacing-3);
+  font-size: var(--font-size-sm);
+  color: var(--color-semantic-surface-fg);
+  border-bottom: var(--border-width-default) solid var(--color-semantic-surface-border);
+  vertical-align: middle;
+}
+
+.table tbody tr:last-child td {
+  border-bottom: none;
+}
+
+.rankHead {
+  width: 44px;
+}
+
+.rankCell {
+  width: 44px;
+}
+
+.rankBadge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 24px;
+  height: 24px;
+  padding: 0 var(--spacing-2);
+  border-radius: var(--border-radius-sm);
+  background: var(--color-palette-neutral-50);
+  color: var(--color-semantic-surface-fg-muted);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-semibold);
+}
+
+.empty {
+  padding: var(--spacing-6) var(--spacing-3);
+  font-size: var(--font-size-sm);
+  color: var(--color-semantic-surface-fg-muted);
+  text-align: center;
+}
