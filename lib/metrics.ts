@@ -23,7 +23,13 @@ interface Pm {
   createdAt?: string;
   unitOfTasks?: { tasks?: PmTask[] };
 }
-interface Asset { assetId?: { id?: string }; type?: { name?: string } }
+interface Asset {
+  assetId?: { id?: string };
+  description?: string;
+  propertyId?: { id?: string };
+  type?: { name?: string };
+  state?: { condition?: number; operationalState?: string };
+}
 
 // ---------- output types ----------
 export interface TeamMemberRow { rank: number; name: string; username: string; completedWorkOrders: number; pmsDone: number; total: number }
@@ -31,6 +37,7 @@ export interface OverdueAssociationRow { rank: number; association: string; tota
 export interface AssetTypeRow { rank: number; assetType: string; workOrders: number }
 export interface AssociationVolumeRow { rank: number; association: string; workOrders: number }
 export interface AssetTypeCountRow { rank: number; assetType: string; count: number }
+export interface WorstConditionRow { rank: number; asset: string; association: string; condition: number }
 export interface Metrics {
   windowDays: number;
   generatedAt: string;
@@ -39,12 +46,20 @@ export interface Metrics {
   assetTypes: AssetTypeRow[];
   associationsByVolume: AssociationVolumeRow[];
   commonAssetTypes: AssetTypeCountRow[];
+  worstConditionAssets: WorstConditionRow[];
 }
 
 // ---------- helpers ----------
 const OVERDUE_CADENCES = new Set(["QUARTERLY", "BIANNUALLY", "YEARLY"]);
 const COMPLETED_WO_STATES = new Set(["COMPLETED", "CLOSED"]);
 const ms = (s?: string | null) => (s ? Date.parse(s) : NaN);
+
+// EXCLUSION RULE: associations whose name matches any of these patterns are
+// removed from EVERY metric/card (test data). computeMetrics filters all inputs
+// up front, so any new aggregation automatically inherits this exclusion.
+// Add patterns here to exclude more associations.
+const EXCLUDED_ASSOCIATIONS: RegExp[] = [/sunny days/i];
+const isExcludedAssociation = (name?: string) => EXCLUDED_ASSOCIATIONS.some((re) => re.test(name ?? ""));
 
 async function fetchAllPages<T>(
   client: UpkeptClient,
@@ -180,20 +195,45 @@ function topAssetTypesByCount(assets: Asset[]): AssetTypeCountRow[] {
     .map((r, i) => ({ rank: i + 1, ...r }));
 }
 
+// ---------- Card: assets with the worst recorded condition ----------
+function worstConditionAssets(assets: Asset[], propertyToAssociation: Map<string, Association>): WorstConditionRow[] {
+  return assets
+    .filter((a) => typeof a.state?.condition === "number")
+    .map((a) => ({
+      asset: a.description || a.type?.name || a.assetId?.id || "(unnamed asset)",
+      association: propertyToAssociation.get(norm(a.propertyId?.id))?.name ?? "(unknown association)",
+      condition: a.state!.condition as number,
+    }))
+    .sort((x, y) => x.condition - y.condition)
+    .slice(0, 10)
+    .map((r, i) => ({ rank: i + 1, ...r }));
+}
+
 // ---------- orchestrator ----------
 export async function computeMetrics(windowDays = 30): Promise<Metrics> {
   const client = await new UpkeptClient().init();
   const { associations, propertyToAssociation } = await loadOrgTree(client);
   const windowStartMs = Date.now() - windowDays * 86_400_000;
 
-  const [workOrders, donePms, overduePms, assetsRes] = await Promise.all([
-    fetchAllWorkOrders(client, associations),
+  // Apply the exclusion rule to every input before aggregating.
+  const includedAssociations = associations.filter((a) => !isExcludedAssociation(a.name));
+  const excludedPropertyIds = new Set<string>();
+  for (const [propId, assoc] of propertyToAssociation) {
+    if (isExcludedAssociation(assoc.name)) excludedPropertyIds.add(propId);
+  }
+  const keep = (propId?: string) => !excludedPropertyIds.has(norm(propId));
+
+  const [workOrders, donePmsAll, overduePmsAll, assetsRes] = await Promise.all([
+    fetchAllWorkOrders(client, includedAssociations),
     fetchAllPages<Pm>(client, "getPms", { state: "DONE" }),
     fetchAllPages<Pm>(client, "getPms", { state: "OVER_DUE" }),
     client.callTool("getAssets", {}),
   ]);
 
-  const assets = asArray<Asset>(assetsRes.data);
+  const donePms = donePmsAll.filter((p) => keep(p.propertyId?.id));
+  const overduePms = overduePmsAll.filter((p) => keep(p.propertyId?.id));
+  const assets = asArray<Asset>(assetsRes.data).filter((a) => keep(a.propertyId?.id));
+
   const typeById = new Map<string, string>();
   for (const a of assets) {
     if (a.assetId?.id) typeById.set(norm(a.assetId.id), a.type?.name ?? "Unknown type");
@@ -207,5 +247,6 @@ export async function computeMetrics(windowDays = 30): Promise<Metrics> {
     assetTypes: topAssetTypesByWorkOrders(workOrders, typeById, windowStartMs),
     associationsByVolume: topAssociationsByWorkOrders(workOrders, propertyToAssociation),
     commonAssetTypes: topAssetTypesByCount(assets),
+    worstConditionAssets: worstConditionAssets(assets, propertyToAssociation),
   };
 }

@@ -1,12 +1,12 @@
 "use client";
 
-import { Boxes, Layers } from "lucide-react";
+import { Boxes, Layers, HeartPulse } from "lucide-react";
 import MetricCard from "@/components/MetricCard";
 import RankedTable, { type Column } from "@/components/RankedTable";
 import BarValue from "@/components/BarValue";
 import PageHeader from "@/components/PageHeader";
 import { useMetrics } from "@/lib/useMetrics";
-import type { AssetTypeRow, AssetTypeCountRow } from "@/lib/metrics";
+import type { AssetTypeRow, AssetTypeCountRow, WorstConditionRow } from "@/lib/metrics";
 import styles from "./dashboard.module.css";
 
 export default function AssetInformationPage() {
@@ -23,6 +23,31 @@ export default function AssetInformationPage() {
   const commonAssetColumns: Column<AssetTypeCountRow>[] = [
     { key: "assetType", label: "Asset type" },
     { key: "count", label: "Assets", align: "right", render: (r) => <BarValue value={r.count} max={maxCount} /> },
+  ];
+
+  const condColor = (c: number) =>
+    c < 40
+      ? "var(--color-palette-danger-500)"
+      : c < 70
+        ? "var(--color-palette-warning-700)"
+        : "var(--color-palette-secondary-500)";
+
+  const conditionColumns: Column<WorstConditionRow>[] = [
+    { key: "asset", label: "Asset" },
+    { key: "association", label: "Association" },
+    {
+      key: "condition",
+      label: "Condition",
+      align: "right",
+      render: (r) => (
+        <span className={styles.barWrap}>
+          <span className={styles.barTrack}>
+            <span style={{ display: "block", height: "100%", width: `${r.condition}%`, background: condColor(r.condition), borderRadius: "inherit" }} />
+          </span>
+          <span className={styles.barValue}>{r.condition}%</span>
+        </span>
+      ),
+    },
   ];
 
   return (
@@ -74,6 +99,22 @@ export default function AssetInformationPage() {
               columns={assetColumns}
               rows={data?.assetTypes ?? []}
               emptyMessage="No work orders created in the last 30 days."
+            />
+          )}
+        </MetricCard>
+
+        <MetricCard
+          title="Assets in worst condition"
+          subtitle="Lowest recorded condition score across all assets"
+          icon={<HeartPulse size={18} aria-hidden="true" />}
+        >
+          {loading ? (
+            <Skeleton />
+          ) : (
+            <RankedTable<WorstConditionRow>
+              columns={conditionColumns}
+              rows={data?.worstConditionAssets ?? []}
+              emptyMessage="No condition data recorded."
             />
           )}
         </MetricCard>
