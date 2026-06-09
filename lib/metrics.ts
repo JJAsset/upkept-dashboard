@@ -6,6 +6,7 @@ interface User { firstName?: string; lastName?: string; username?: string; roles
 interface Assignee { user?: User; teamId?: { id?: string } }
 interface WorkOrder {
   id?: string;
+  property?: { id?: string };
   state?: string;
   createdAt?: string;
   closedAt?: string;
@@ -28,12 +29,16 @@ interface Asset { assetId?: { id?: string }; type?: { name?: string } }
 export interface TeamMemberRow { rank: number; name: string; username: string; completedWorkOrders: number; pmsDone: number; total: number }
 export interface OverdueAssociationRow { rank: number; association: string; total: number; quarterly: number; biannually: number; yearly: number }
 export interface AssetTypeRow { rank: number; assetType: string; workOrders: number }
+export interface AssociationVolumeRow { rank: number; association: string; workOrders: number }
+export interface AssetTypeCountRow { rank: number; assetType: string; count: number }
 export interface Metrics {
   windowDays: number;
   generatedAt: string;
   teamMembers: TeamMemberRow[];
   overdueAssociations: OverdueAssociationRow[];
   assetTypes: AssetTypeRow[];
+  associationsByVolume: AssociationVolumeRow[];
+  commonAssetTypes: AssetTypeCountRow[];
 }
 
 // ---------- helpers ----------
@@ -144,6 +149,37 @@ function topAssetTypesByWorkOrders(workOrders: WorkOrder[], typeById: Map<string
     .map((r, i) => ({ rank: i + 1, ...r }));
 }
 
+// ---------- Card: top associations by total work-order volume (all-time) ----------
+function topAssociationsByWorkOrders(workOrders: WorkOrder[], propertyToAssociation: Map<string, Association>): AssociationVolumeRow[] {
+  const tally = new Map<string, { name: string; count: number }>();
+  for (const wo of workOrders) {
+    const assoc = propertyToAssociation.get(norm(wo.property?.id));
+    if (!assoc) continue;
+    const cur = tally.get(assoc.id) ?? { name: assoc.name, count: 0 };
+    cur.count++;
+    tally.set(assoc.id, cur);
+  }
+  return [...tally.values()]
+    .map((v) => ({ association: v.name, workOrders: v.count }))
+    .sort((x, y) => y.workOrders - x.workOrders)
+    .slice(0, 10)
+    .map((r, i) => ({ rank: i + 1, ...r }));
+}
+
+// ---------- Card: most common asset types (by asset count) ----------
+function topAssetTypesByCount(assets: Asset[]): AssetTypeCountRow[] {
+  const tally = new Map<string, number>();
+  for (const a of assets) {
+    const type = a.type?.name ?? "Unknown type";
+    tally.set(type, (tally.get(type) ?? 0) + 1);
+  }
+  return [...tally.entries()]
+    .map(([assetType, count]) => ({ assetType, count }))
+    .sort((x, y) => y.count - x.count)
+    .slice(0, 10)
+    .map((r, i) => ({ rank: i + 1, ...r }));
+}
+
 // ---------- orchestrator ----------
 export async function computeMetrics(windowDays = 30): Promise<Metrics> {
   const client = await new UpkeptClient().init();
@@ -157,8 +193,9 @@ export async function computeMetrics(windowDays = 30): Promise<Metrics> {
     client.callTool("getAssets", {}),
   ]);
 
+  const assets = asArray<Asset>(assetsRes.data);
   const typeById = new Map<string, string>();
-  for (const a of asArray<Asset>(assetsRes.data)) {
+  for (const a of assets) {
     if (a.assetId?.id) typeById.set(norm(a.assetId.id), a.type?.name ?? "Unknown type");
   }
 
@@ -168,5 +205,7 @@ export async function computeMetrics(windowDays = 30): Promise<Metrics> {
     teamMembers: topTeamMembers(workOrders, donePms, windowStartMs),
     overdueAssociations: topOverdueAssociations(overduePms, propertyToAssociation),
     assetTypes: topAssetTypesByWorkOrders(workOrders, typeById, windowStartMs),
+    associationsByVolume: topAssociationsByWorkOrders(workOrders, propertyToAssociation),
+    commonAssetTypes: topAssetTypesByCount(assets),
   };
 }

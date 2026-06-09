@@ -1,7 +1,18 @@
-import { LayoutDashboard } from "lucide-react";
+"use client";
+
+import Link from "next/link";
+import { usePathname } from "next/navigation";
+import { Boxes, Users } from "lucide-react";
 import styles from "./Sidebar.module.css";
 
+const NAV = [
+  { href: "/", label: "Asset information", Icon: Boxes },
+  { href: "/team", label: "Team performance", Icon: Users },
+];
+
 export default function Sidebar() {
+  const pathname = usePathname();
+
   return (
     <aside className={styles.sidebar} aria-label="Primary">
       <div className={styles.brand}>
@@ -11,10 +22,20 @@ export default function Sidebar() {
       </div>
 
       <nav className={styles.nav} aria-label="Main">
-        <a href="/" className={`${styles.navItem} ${styles.active}`} aria-current="page">
-          <LayoutDashboard size={18} aria-hidden="true" />
-          <span>Dashboard</span>
-        </a>
+        {NAV.map(({ href, label, Icon }) => {
+          const active = href === "/" ? pathname === "/" : pathname.startsWith(href);
+          return (
+            <Link
+              key={href}
+              href={href}
+              className={`${styles.navItem} ${active ? styles.active : ""}`}
+              aria-current={active ? "page" : undefined}
+            >
+              <Icon size={18} aria-hidden="true" />
+              <span>{label}</span>
+            </Link>
+          );
+        })}
       </nav>
 
       <p className={styles.footer}>Upkept · Production</p>

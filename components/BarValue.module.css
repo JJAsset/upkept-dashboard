@@ -1,0 +1,28 @@
+.barWrap {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--spacing-3);
+  width: 100%;
+}
+
+.barTrack {
+  flex: 0 1 120px;
+  height: 8px;
+  border-radius: var(--border-radius-sm);
+  background: var(--color-palette-neutral-50);
+  overflow: hidden;
+}
+
+.barFill {
+  display: block;
+  height: 100%;
+  background: var(--color-palette-secondary-500);
+  border-radius: var(--border-radius-sm);
+}
+
+.barValue {
+  min-width: 28px;
+  text-align: right;
+  font-weight: var(--font-weight-semibold);
+}
