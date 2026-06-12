@@ -1,4 +1,4 @@
-import { UpkeptClient, asArray, type ToolResult } from "./upkeptClient";
+import { UpkeptClient, asArray } from "./upkeptClient";
 import { loadOrgTree, norm, stripHyphens, type Association } from "./orgTree";
 
 // ---------- shared types (only the fields we use) ----------
@@ -61,31 +61,57 @@ const ms = (s?: string | null) => (s ? Date.parse(s) : NaN);
 const EXCLUDED_ASSOCIATIONS: RegExp[] = [/sunny days/i];
 const isExcludedAssociation = (name?: string) => EXCLUDED_ASSOCIATIONS.some((re) => re.test(name ?? ""));
 
+// Paginate a tool. waveSize > 1 fetches that many pages concurrently per round
+// (production has no LB session affinity, so each request is slow — fetching
+// pages in parallel waves keeps large result sets from serializing).
 async function fetchAllPages<T>(
   client: UpkeptClient,
   tool: string,
   baseArgs: Record<string, unknown>,
   pageSize = 100,
-  maxPages = 500,
+  waveSize = 1,
+  maxPages = 4000,
 ): Promise<T[]> {
   const out: T[] = [];
-  for (let page = 0; page < maxPages; page++) {
-    const res: ToolResult = await client.callTool(tool, { ...baseArgs, page, pageSize });
-    const items = asArray<T>(res.data);
-    out.push(...items);
-    if (items.length < pageSize) break;
+  for (let page = 0; page < maxPages; page += waveSize) {
+    const wave = Array.from({ length: waveSize }, (_, i) => page + i);
+    const batches = await Promise.all(
+      wave.map((p) => client.callTool(tool, { ...baseArgs, page: p, pageSize }).then((r) => asArray<T>(r.data))),
+    );
+    let reachedEnd = false;
+    for (const items of batches) {
+      out.push(...items);
+      if (items.length < pageSize) reachedEnd = true;
+    }
+    if (reachedEnd) break;
   }
   return out;
 }
 
+// Run an async fn over items with a bounded concurrency (preserves order).
+async function mapWithConcurrency<T, R>(items: T[], limit: number, fn: (item: T) => Promise<R>): Promise<R[]> {
+  const results: R[] = new Array(items.length);
+  let next = 0;
+  const worker = async () => {
+    while (true) {
+      const i = next++;
+      if (i >= items.length) return;
+      results[i] = await fn(items[i]);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
+  return results;
+}
+
 // NOTE: queryWorkOrderItems' server-side `status` filter is ignored by the MCP
 // (returns nothing), so we fetch every WO per association and filter client-side.
+// Associations are fetched in parallel (bounded) to keep the cold load fast —
+// production has no LB session affinity, so sequential fetching is very slow.
 async function fetchAllWorkOrders(client: UpkeptClient, assocs: Association[]): Promise<WorkOrder[]> {
-  const out: WorkOrder[] = [];
-  for (const a of assocs) {
-    out.push(...(await fetchAllPages<WorkOrder>(client, "queryWorkOrderItems", { associationId: stripHyphens(a.id) })));
-  }
-  return out;
+  const perAssoc = await mapWithConcurrency(assocs, 8, (a) =>
+    fetchAllPages<WorkOrder>(client, "queryWorkOrderItems", { associationId: stripHyphens(a.id) }),
+  );
+  return perAssoc.flat();
 }
 
 function personFrom(a: (Assignee & Partial<User>) | null | undefined): { username: string; name: string } | null {
@@ -225,8 +251,8 @@ export async function computeMetrics(windowDays = 30): Promise<Metrics> {
 
   const [workOrders, donePmsAll, overduePmsAll, assetsRes] = await Promise.all([
     fetchAllWorkOrders(client, includedAssociations),
-    fetchAllPages<Pm>(client, "getPms", { state: "DONE" }),
-    fetchAllPages<Pm>(client, "getPms", { state: "OVER_DUE" }),
+    fetchAllPages<Pm>(client, "getPms", { state: "DONE" }, 200, 8),
+    fetchAllPages<Pm>(client, "getPms", { state: "OVER_DUE" }, 200, 8),
     client.callTool("getAssets", {}),
   ]);
 
